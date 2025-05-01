@@ -2,45 +2,53 @@
 import React, { useRef, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
-interface WebcamViewProps {
+type WebcamViewProps = React.HTMLAttributes<HTMLDivElement> & {
   className?: string;
   onFrame?: (imageData: ImageData) => void;
   width?: number;
   height?: number;
   drawCanvas?: boolean;
   canvasRef?: React.RefObject<HTMLCanvasElement>;
+  showControls?: boolean;
 }
 
-const WebcamView: React.FC<WebcamViewProps> = ({
+const WebcamView = ({
   className,
   onFrame,
   width = 640,
   height = 480,
   drawCanvas = true,
   canvasRef: externalCanvasRef,
+  showControls = true,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const internalCanvasRef = useRef<HTMLCanvasElement>(null);
   const canvasRef = externalCanvasRef || internalCanvasRef;
+  const [isCameraActive, setIsCameraActive] = useState(false);
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const animationRef = useRef<number | null>(null);
 
+  // Effect for handling camera setup and teardown based on isCameraActive
   useEffect(() => {
+    let stream = null;
+
     async function setupCamera() {
+      if (!isCameraActive) return;
+
       try {
         setIsLoading(true);
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { 
-            width, 
+        setHasPermission(null); // Reset permission status on attempt
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width,
             height,
             facingMode: "user",
-            // Request optimal settings for smooth movement
-            frameRate: { ideal: 30 }
+            frameRate: { ideal: 30 },
           },
           audio: false,
         });
-        
+
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           videoRef.current.onloadedmetadata = () => {
@@ -58,98 +66,134 @@ const WebcamView: React.FC<WebcamViewProps> = ({
 
     setupCamera();
 
+    // Cleanup function: stops tracks when isCameraActive becomes false or component unmounts
     return () => {
-      // Clean up video stream on unmount
-      const stream = videoRef.current?.srcObject as MediaStream;
       if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+        stream.getTracks().forEach((track) => track.stop());
       }
-      
-      // Cancel any pending animation frames
+      if (videoRef.current) {
+        videoRef.current.srcObject = null; // Clear the srcObject
+      }
+      setIsLoading(false); // Ensure loading is reset
+      // Keep hasPermission state as is, it reflects the last attempt
+    };
+  }, [isCameraActive, width, height]); // Re-run if active state or dimensions change
+
+  // Effect for handling frame capture and drawing
+  useEffect(() => {
+    // Only run if camera is active, permission granted, and onFrame is provided
+    if (!isCameraActive || !hasPermission || !onFrame || !videoRef.current || !canvasRef.current) {
+      // If capture was running, stop it
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
         animationRef.current = null;
       }
-    };
-  }, [width, height]);
+      return;
+    }
 
-  useEffect(() => {
-    if (!videoRef.current || !canvasRef.current || !hasPermission || !onFrame) return;
-
-    // Create a more efficient capture frame function with throttling
     let lastFrameTime = 0;
     const frameDuration = 1000 / 30; // Target 30fps
-    
-    const captureFrame = (timestamp: number) => {
-      // Throttle frame capture to maintain consistent frame rate
+
+    const captureFrame = (timestamp) => {
+      if (!videoRef.current || !canvasRef.current) return; // Guard against null refs
+
       if (timestamp - lastFrameTime >= frameDuration) {
         lastFrameTime = timestamp;
-        
-        const ctx = canvasRef.current?.getContext("2d", { willReadFrequently: true });
-        if (!ctx || !videoRef.current) return;
 
-        // Draw the video frame to the canvas
-        ctx.drawImage(videoRef.current, 0, 0, width, height);
-        
-        // If we need to process the frame, get the ImageData and call onFrame
-        if (onFrame) {
+        const ctx = canvasRef.current.getContext("2d", { willReadFrequently: true });
+        if (!ctx) return;
+
+        try {
+          ctx.drawImage(videoRef.current, 0, 0, width, height);
           const imageData = ctx.getImageData(0, 0, width, height);
           onFrame(imageData);
+        } catch (error) {
+           console.error("Error processing frame:", error);
+           // Optionally stop capture if errors persist
         }
       }
-      
-      // Continue capturing frames
+
       animationRef.current = requestAnimationFrame(captureFrame);
     };
 
-    // Start capturing frames
+    // Start capturing frames only when conditions are met
     animationRef.current = requestAnimationFrame(captureFrame);
-    
-    // Clean up
+
+    // Cleanup function for this effect: cancel animation frame
     return () => {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
         animationRef.current = null;
       }
     };
-  }, [hasPermission, onFrame, width, height, drawCanvas]);
+  // Rerun if activity, permission, frame handler, or dimensions change
+  }, [isCameraActive, hasPermission, onFrame, width, height, drawCanvas, canvasRef]);
+
+  // Toggle function only changes the state, effect handles the rest
+  const toggleCamera = () => {
+    setIsCameraActive(prev => !prev);
+    if (isCameraActive) {
+        // If turning off, reset permission state visually until next attempt
+        setHasPermission(null);
+    }
+  };
 
   return (
     <div className={cn("relative", className)}>
+      {showControls && (
+        <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-2 z-20">
+          <button
+            onClick={toggleCamera}
+            className="bg-primary text-primary-foreground px-4 py-2 rounded-md disabled:opacity-50"
+            disabled={isLoading} // Disable button while loading
+          >
+            {isLoading ? 'Loading...' : (isCameraActive ? 'Stop Camera' : 'Start Camera')}
+          </button>
+        </div>
+      )}
       {isLoading && (
         <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white z-10">
           Loading camera...
         </div>
       )}
-      
-      {hasPermission === false && (
+
+      {hasPermission === false && !isLoading && (
         <div className="absolute inset-0 flex items-center justify-center bg-destructive bg-opacity-20 text-destructive z-10 p-4 text-center">
           <div>
             <p className="font-bold text-lg">Camera access denied</p>
-            <p className="text-sm">Please allow camera access to use the fitness tracker</p>
+            <p className="text-sm">Please allow camera access in your browser settings.</p>
           </div>
         </div>
       )}
-      
-      <video 
-        ref={videoRef} 
+
+      {/* Show placeholder or video/canvas */}
+      {(!isCameraActive || hasPermission === false) && !isLoading && (
+         <div className="w-full bg-muted aspect-video rounded-lg flex items-center justify-center text-muted-foreground">
+            Camera is off or permission denied.
+         </div>
+      )}
+
+      <video
+        ref={videoRef}
         className={cn(
           "w-full h-auto rounded-lg",
-          (!drawCanvas || !hasPermission) ? "block" : "hidden"
-        )} 
+          // Show video only if active, has permission, and canvas isn't supposed to be drawn
+          (isCameraActive && hasPermission && !drawCanvas) ? "block" : "hidden"
+        )}
         width={width}
         height={height}
         playsInline
         muted
       />
-      
-      <canvas 
-        ref={canvasRef} 
+
+      <canvas
+        ref={canvasRef}
         className={cn(
-          "w-full h-auto rounded-lg", 
-          drawCanvas && hasPermission ? "block" : "hidden"
-        )} 
-        width={width} 
+          "w-full h-auto rounded-lg",
+          // Show canvas only if active, has permission, and canvas is supposed to be drawn
+          (isCameraActive && hasPermission && drawCanvas) ? "block" : "hidden"
+        )}
+        width={width}
         height={height}
       />
     </div>

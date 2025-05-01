@@ -1,5 +1,4 @@
-
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import WebcamView from "./WebcamView";
 import ExerciseStats from "./ExerciseStats";
@@ -52,7 +51,9 @@ const FitnessTracker: React.FC<FitnessTrackerProps> = ({ className }) => {
     [ExerciseType.NONE]: initExerciseState(ExerciseType.NONE),
     [ExerciseType.SQUAT]: initExerciseState(ExerciseType.SQUAT),
     [ExerciseType.BICEP_CURL]: initExerciseState(ExerciseType.BICEP_CURL),
-    [ExerciseType.SHOULDER_PRESS]: initExerciseState(ExerciseType.SHOULDER_PRESS),
+    // [ExerciseType.SHOULDER_PRESS]: initExerciseState(ExerciseType.SHOULDER_PRESS), // Removed
+    [ExerciseType.PUSH_UP]: initExerciseState(ExerciseType.PUSH_UP),
+    [ExerciseType.PULL_UP]: initExerciseState(ExerciseType.PULL_UP),
   });
 
   useEffect(() => {
@@ -77,15 +78,7 @@ const FitnessTracker: React.FC<FitnessTrackerProps> = ({ className }) => {
     };
   }, []);
 
-  useEffect(() => {
-    if (isTracking && uploadedVideo && inputMode === 'video') {
-      startVideoPlayback();
-    } else if (!isTracking && uploadedVideo && inputMode === 'video') {
-      pauseVideoPlayback();
-    }
-  }, [isTracking, uploadedVideo, inputMode]);
-
-  const startVideoPlayback = () => {
+  const startVideoPlayback = useCallback(() => {
     if (!uploadedVideo || !videoRef.current) return;
     
     if (videoRef.current.src !== uploadedVideo.src) {
@@ -113,8 +106,16 @@ const FitnessTracker: React.FC<FitnessTrackerProps> = ({ className }) => {
     if (!animationRef.current && videoRef.current) {
       processVideoFrame();
     }
-  };
-  
+  }, [uploadedVideo]);
+
+  useEffect(() => {
+    if (isTracking && uploadedVideo && inputMode === 'video') {
+      startVideoPlayback();
+    } else if (!isTracking && uploadedVideo && inputMode === 'video') {
+      pauseVideoPlayback();
+    }
+  }, [isTracking, uploadedVideo, inputMode, startVideoPlayback]);
+
   const pauseVideoPlayback = () => {
     if (videoRef.current) {
       videoRef.current.pause();
@@ -293,7 +294,7 @@ const FitnessTracker: React.FC<FitnessTrackerProps> = ({ className }) => {
         [currentExercise]: exerciseState
       }));
     }
-  }, [exerciseState.totalReps, currentExercise]);
+  }, [exerciseState, currentExercise]);
 
   return (
     <div className={cn("grid gap-6", className)}>
